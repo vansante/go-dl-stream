@@ -125,7 +125,7 @@ func startDownloadRetries(ctx context.Context, url string, contentLength, writte
 		var bodyReader io.ReadCloser
 		contentLength, bodyReader, err = doDownloadRequest(ctx, url, written, options)
 		if err != nil {
-			options.Printf("DownloadStreamOpts: Error opening URL: %v", err)
+			options.Printf("DownloadStreamOpts: Error retrieving URL: %v", err)
 			waitTime = retryWait(options, waitTime)
 			continue
 		}
