@@ -122,10 +122,14 @@ func TestDownloadStreamManualResume(t *testing.T) {
 	err := DownloadStreamOpts(context.Background(), "http://127.0.0.1:1337/random.rnd", dlPath, ioutil.Discard, options)
 	assert.Error(t, err)
 	assert.EqualValues(t, ErrNoMoreRetries, err)
+	assert.EqualValues(t, options.RetryWait, time.Millisecond*200)
+	assert.EqualValues(t, options.Retries, 2)
 
 	err = DownloadStreamOpts(context.Background(), "http://127.0.0.1:1337/random.rnd", dlPath, ioutil.Discard, options)
 	assert.Error(t, err)
 	assert.EqualValues(t, ErrNoMoreRetries, err)
+	assert.EqualValues(t, options.RetryWait, time.Millisecond*200)
+	assert.EqualValues(t, options.Retries, 2)
 
 	err = DownloadStreamOpts(context.Background(), "http://127.0.0.1:1337/random.rnd", dlPath, hasherStream, options)
 	assert.NoError(t, err)
