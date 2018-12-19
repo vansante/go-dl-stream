@@ -34,8 +34,8 @@ type Logger interface {
 type Options struct {
 	Timeout             time.Duration
 	InitialHeadTimeout  time.Duration
+	RetryWait           time.Duration
 	Retries             uint
-	RetryWaitSeconds    uint
 	RetryWaitMultiplier float64
 	FileMode            os.FileMode
 	BufferSize          uint
@@ -49,7 +49,7 @@ func DefaultOptions() Options {
 		Timeout:             time.Hour,
 		InitialHeadTimeout:  time.Second * 3,
 		Retries:             10,
-		RetryWaitSeconds:    1,
+		RetryWait:           1,
 		RetryWaitMultiplier: 1.61803398875, // Bonus points to who gets it
 		FileMode:            0755,
 		BufferSize:          128 * 1024,
@@ -122,7 +122,7 @@ func DownloadStreamOpts(ctx context.Context, url, filePath string, writer io.Wri
 // startDownloadTries starts a loop that retries the download until it either finishes or the retries are depleted
 func startDownloadTries(ctx context.Context, url string, contentLength, written int64, file *os.File, writer io.Writer, options *Options) (err error) {
 	buffer := make([]byte, options.BufferSize)
-	waitTime := time.Duration(options.RetryWaitSeconds) * time.Second
+	waitTime := options.RetryWait
 
 	// Loop that retries the download
 	for i := 0; i < int(options.Retries); i++ {
@@ -285,6 +285,11 @@ func fetchURLInfo(url string, options *Options) (contentLength int64, resumable 
 // If truncate is true, the file is truncated.
 func openFile(filePath string, truncate bool, options *Options) (file *os.File, resumeFrom int64, err error) {
 	flags := os.O_CREATE | os.O_EXCL
+
+	_, statErr := os.Stat(filePath)
+	if statErr == nil {
+		flags = os.O_APPEND
+	}
 	if truncate {
 		flags |= os.O_TRUNC | os.O_WRONLY
 	} else {

@@ -8,6 +8,7 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -19,9 +20,47 @@ import (
 )
 
 const (
-	fileSize    = 4 * 1337 * 1337
+	fileSize    = 5 * 1337 * 1337
 	interruptAt = 1999999
 )
+
+func TestDownloadStreamNormal(t *testing.T) {
+	_, hash, cleanup := serveInterruptedTestFile(t, fileSize, 0, 1337)
+	defer cleanup()
+
+	hasherStream := sha1.New()
+
+	dlPath := filepath.Join(os.TempDir(), "dl-normal-test")
+	_ = os.Remove(dlPath) // Remove if it already exists
+	defer os.Remove(dlPath)
+
+	options := DefaultOptions()
+	options.Logger = &testLogger{t}
+	// Speed up the test
+	options.RetryWait = time.Millisecond * 200
+	options.RetryWaitMultiplier = 1
+
+	err := DownloadStreamOpts(context.Background(), "http://127.0.0.1:1337/random.rnd", dlPath, hasherStream, options)
+	assert.NoError(t, err)
+
+	assert.Equal(t, hash, hasherStream.Sum(nil))
+
+	file, err := os.Open(dlPath)
+	assert.NoError(t, err)
+	defer func() {
+		assert.NoError(t, file.Close())
+	}()
+
+	fi, err := file.Stat()
+	assert.NoError(t, err)
+	assert.EqualValues(t, fileSize, fi.Size())
+
+	hasherFile := sha1.New()
+	_, err = io.Copy(hasherFile, file)
+	assert.NoError(t, err)
+
+	assert.Equal(t, hash, hasherFile.Sum(nil))
+}
 
 func TestDownloadStreamInterrupted(t *testing.T) {
 	_, hash, cleanup := serveInterruptedTestFile(t, fileSize, interruptAt, 1337)
@@ -35,9 +74,58 @@ func TestDownloadStreamInterrupted(t *testing.T) {
 
 	options := DefaultOptions()
 	options.Logger = &testLogger{t}
-	options.RetryWaitMultiplier = 0.8 // Speed up the test
+	// Speed up the test
+	options.RetryWait = time.Millisecond * 200
+	options.RetryWaitMultiplier = 1
 
 	err := DownloadStreamOpts(context.Background(), "http://127.0.0.1:1337/random.rnd", dlPath, hasherStream, options)
+	assert.NoError(t, err)
+
+	assert.Equal(t, hash, hasherStream.Sum(nil))
+
+	file, err := os.Open(dlPath)
+	assert.NoError(t, err)
+	defer func() {
+		assert.NoError(t, file.Close())
+	}()
+
+	fi, err := file.Stat()
+	assert.NoError(t, err)
+	assert.EqualValues(t, fileSize, fi.Size())
+
+	hasherFile := sha1.New()
+	_, err = io.Copy(hasherFile, file)
+	assert.NoError(t, err)
+
+	assert.Equal(t, hash, hasherFile.Sum(nil))
+}
+
+func TestDownloadStreamManualResume(t *testing.T) {
+	_, hash, cleanup := serveInterruptedTestFile(t, fileSize, interruptAt, 1337)
+	defer cleanup()
+
+	hasherStream := sha1.New()
+
+	dlPath := filepath.Join(os.TempDir(), "dl-manual-resume-test")
+	_ = os.Remove(dlPath) // Remove if it already exists
+	defer os.Remove(dlPath)
+
+	options := DefaultOptions()
+	options.Logger = &testLogger{t}
+	// Speed up the test
+	options.RetryWait = time.Millisecond * 200
+	options.RetryWaitMultiplier = 1
+	options.Retries = 2
+
+	err := DownloadStreamOpts(context.Background(), "http://127.0.0.1:1337/random.rnd", dlPath, ioutil.Discard, options)
+	assert.Error(t, err)
+	assert.EqualValues(t, ErrNoMoreRetries, err)
+
+	err = DownloadStreamOpts(context.Background(), "http://127.0.0.1:1337/random.rnd", dlPath, ioutil.Discard, options)
+	assert.Error(t, err)
+	assert.EqualValues(t, ErrNoMoreRetries, err)
+
+	err = DownloadStreamOpts(context.Background(), "http://127.0.0.1:1337/random.rnd", dlPath, hasherStream, options)
 	assert.NoError(t, err)
 
 	assert.Equal(t, hash, hasherStream.Sum(nil))
@@ -72,7 +160,6 @@ func serveInterruptedTestFile(t *testing.T, fileSize, interruptAt int64, port in
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(writer http.ResponseWriter, request *http.Request) {
 		log.Printf("Serving random interrupted file (size: %d, interuptAt: %d), Range: %s", fileSize, interruptAt, request.Header.Get(rangeHeader))
-		// https://stackoverflow.com/questions/27187617/how-would-i-limit-upload-and-download-speed-from-the-server-in-golang
 
 		http.ServeFile(&interruptibleHTTPWriter{
 			ResponseWriter: writer,
@@ -82,14 +169,25 @@ func serveInterruptedTestFile(t *testing.T, fileSize, interruptAt int64, port in
 
 	})
 
+	server := &http.Server{
+		Handler: mux,
+	}
+
 	go func() {
 		log.Printf("Starting http server on port %d", port)
-		_ = http.ListenAndServe(fmt.Sprintf(":%d", port), mux)
+		l, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+		assert.NoError(t, err)
+		if err != nil {
+			t.FailNow()
+		}
+
+		_ = server.Serve(l)
 	}()
 
 	time.Sleep(time.Second / 3) // Wait for HTTP server
 
 	return filePath, hasher.Sum(nil), func() {
+		_ = server.Close()
 		_ = os.Remove(filePath)
 	}
 }
@@ -109,7 +207,7 @@ func (w *interruptibleHTTPWriter) Write(buf []byte) (n int, err error) {
 	defer w.mu.Unlock()
 
 	w.written += int64(len(buf))
-	if w.written > w.interruptAt {
+	if w.interruptAt > 0 && w.written > w.interruptAt {
 		offset := len(buf) - int(w.written-w.interruptAt)
 		n, err = w.writer.Write(buf[:offset])
 		if err != nil {
