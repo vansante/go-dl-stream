@@ -207,7 +207,7 @@ func doDownloadRequest(ctx context.Context, url string, downloadFrom, totalConte
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return  nil, errors.Wrap(err, "error requesting url")
+		return nil, errors.Wrap(err, "error requesting url")
 	}
 
 	if downloadFrom <= 0 {

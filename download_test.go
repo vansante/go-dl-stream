@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha1"
-	"encoding/hex"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -25,7 +24,7 @@ const (
 )
 
 func TestDownloadStreamInterrupted(t *testing.T) {
-	serveFilePath, hash, cleanup := serveInterruptedTestFile(t, fileSize, interruptAt, 1337)
+	_, hash, cleanup := serveInterruptedTestFile(t, fileSize, interruptAt, 1337)
 	defer cleanup()
 
 	hasherStream := sha1.New()
@@ -58,16 +57,6 @@ func TestDownloadStreamInterrupted(t *testing.T) {
 	assert.NoError(t, err)
 
 	assert.Equal(t, hash, hasherFile.Sum(nil))
-
-	// DEBUG
-
-	//file.Seek(0, io.SeekStart)
-	//os.Stdout.WriteString("\nDL FILE:\n=======\n")
-	//io.Copy(hex.NewEncoder(os.Stdout), file)
-	//
-	//file2, _ := os.Open(serveFilePath)
-	//os.Stdout.WriteString("\nTEMP FILE:\n=======\n")
-	//io.Copy(hex.NewEncoder(os.Stdout), file2)
 }
 
 func serveInterruptedTestFile(t *testing.T, fileSize, interruptAt int64, port int) (filePath string, sha1Hash []byte, cleanup func()) {
@@ -85,7 +74,7 @@ func serveInterruptedTestFile(t *testing.T, fileSize, interruptAt int64, port in
 		log.Printf("Serving random interrupted file (size: %d, interuptAt: %d), Range: %s", fileSize, interruptAt, request.Header.Get(rangeHeader))
 		// https://stackoverflow.com/questions/27187617/how-would-i-limit-upload-and-download-speed-from-the-server-in-golang
 
-		http.ServeFile(&interruptibleHttpWriter{
+		http.ServeFile(&interruptibleHTTPWriter{
 			ResponseWriter: writer,
 			writer:         writer,
 			interruptAt:    interruptAt,
@@ -105,7 +94,7 @@ func serveInterruptedTestFile(t *testing.T, fileSize, interruptAt int64, port in
 	}
 }
 
-type interruptibleHttpWriter struct {
+type interruptibleHTTPWriter struct {
 	http.ResponseWriter
 
 	writer      io.Writer
@@ -115,7 +104,7 @@ type interruptibleHttpWriter struct {
 }
 
 // Write interrupts after writing a certain size
-func (w *interruptibleHttpWriter) Write(buf []byte) (n int, err error) {
+func (w *interruptibleHTTPWriter) Write(buf []byte) (n int, err error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
@@ -139,5 +128,5 @@ type testLogger struct {
 
 func (tl *testLogger) Printf(format string, args ...interface{}) {
 	log.Printf(format, args...)
-	tl.Logf(format, args...)
+	//tl.Logf(format, args...)
 }
