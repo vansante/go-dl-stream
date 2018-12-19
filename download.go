@@ -270,10 +270,10 @@ func doDownloadRequest(ctx context.Context, url string, downloadFrom, totalConte
 }
 
 // fetchURLInfoTries tries the configured amount of attempts at doing a HEAD request
-// See fetchURLInfo for more information
+// See FetchURLInfo for more information
 func fetchURLInfoTries(ctx context.Context, url string, options *Options) (contentLength int64, resumable bool, err error) {
 	for i := 0; i < int(options.Retries); i++ {
-		contentLength, resumable, err = fetchURLInfo(ctx, url, options)
+		contentLength, resumable, err = FetchURLInfo(ctx, url, options.InitialHeadTimeout)
 		if err != nil && shouldRetryRequest(err) {
 			options.Infof("dlstream.fetchURLInfoTries: Error fetching URL info: %v, retrying request", err)
 			retryWait(options)
@@ -291,14 +291,14 @@ func fetchURLInfoTries(ctx context.Context, url string, options *Options) (conte
 	return -1, false, ErrNoMoreRetries
 }
 
-// fetchURLInfo does a HEAD request to see if the download URL is valid and returns the size of the file
-// Also checks if the download can be resumed
-func fetchURLInfo(ctx context.Context, url string, options *Options) (contentLength int64, resumable bool, err error) {
+// FetchURLInfo does a HEAD request to see if the download URL is valid and returns the size of the content.
+// Also checks if the download can be resumed by looking at capability headers.
+func FetchURLInfo(ctx context.Context, url string, timeout time.Duration) (contentLength int64, resumable bool, err error) {
 	client := http.Client{
-		Timeout: options.InitialHeadTimeout,
+		Timeout: timeout,
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, options.InitialHeadTimeout)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	req, err := http.NewRequest(http.MethodHead, url, nil)
