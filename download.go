@@ -29,7 +29,8 @@ var (
 
 // Logger is an optional interface used for outputting debug logging
 type Logger interface {
-	Printf(format string, args ...interface{})
+	Infof(format string, args ...interface{})
+	Errorf(format string, args ...interface{})
 }
 
 // Options are a set of options used while downloading a stream
@@ -58,12 +59,20 @@ func DefaultOptions() Options {
 	}
 }
 
-// Printf checks if a logger is present and logs to it if it is
-func (o *Options) Printf(format string, args ...interface{}) {
+// Infof checks if a logger is present and logs to it at info level if it is
+func (o *Options) Infof(format string, args ...interface{}) {
 	if o.Logger == nil {
 		return
 	}
-	o.Logger.Printf(format, args...)
+	o.Logger.Infof(format, args...)
+}
+
+// Errorf checks if a logger is present and logs to it at error level if it is
+func (o *Options) Errorf(format string, args ...interface{}) {
+	if o.Logger == nil {
+		return
+	}
+	o.Logger.Errorf(format, args...)
 }
 
 // DownloadStream downloads the file at the given URL to the filepath, while also sending a stream
@@ -86,13 +95,13 @@ func DownloadStreamOpts(ctx context.Context, url, filePath string, writer io.Wri
 	// Truncate the file if we cannot resume the http download
 	file, written, err := openFile(filePath, !resumable, &options)
 	if err != nil {
-		options.Printf("dlstream.DownloadStreamOpts: Could not open file: %v", err)
+		options.Errorf("dlstream.DownloadStreamOpts: Could not open file: %v", err)
 		return err
 	}
 	defer func() {
 		closeErr := file.Close()
 		if closeErr != nil {
-			options.Printf("dlstream.DownloadStreamOpts: Error closing file: %v", err)
+			options.Errorf("dlstream.DownloadStreamOpts: Error closing file: %v", err)
 		}
 	}()
 
@@ -101,21 +110,21 @@ func DownloadStreamOpts(ctx context.Context, url, filePath string, writer io.Wri
 	}
 
 	if !resumable {
-		options.Printf("dlstream.DownloadStreamOpts: Download not resumable")
+		options.Infof("dlstream.DownloadStreamOpts: Download not resumable")
 	} else if written > 0 {
-		options.Printf("dlstream.DownloadStreamOpts: Current file size: %d, resuming", written)
+		options.Infof("dlstream.DownloadStreamOpts: Current file size: %d, resuming", written)
 	}
 
 	// If we are resuming a download, copy the existing file contents to the writer for replay
 	if written > 0 {
 		_, err = file.Seek(0, io.SeekStart)
 		if err != nil {
-			options.Printf("dlstream.DownloadStreamOpts: Error seeking file to start: %v", err)
+			options.Errorf("dlstream.DownloadStreamOpts: Error seeking file to start: %v", err)
 			return errors.Wrap(err, "error seeking file to start")
 		}
 		written, err = io.Copy(writer, file)
 		if err != nil {
-			options.Printf("dlstream.DownloadStreamOpts: Error replaying file stream: %v", err)
+			options.Errorf("dlstream.DownloadStreamOpts: Error replaying file stream: %v", err)
 			return errors.Wrap(err, "error replaying file stream")
 		}
 	}
@@ -129,16 +138,16 @@ func startDownloadTries(ctx context.Context, url string, contentLength, written 
 
 	// Loop that retries the download
 	for i := 0; i < int(options.Retries); i++ {
-		options.Printf("dlstream.startDownloadTries: Downloading %s from offset %d, total size: %d, attempt %d", url, written, contentLength, i)
+		options.Infof("dlstream.startDownloadTries: Downloading %s from offset %d, total size: %d, attempt %d", url, written, contentLength, i)
 
 		var bodyReader io.ReadCloser
 		bodyReader, err = doDownloadRequest(ctx, url, written, contentLength, options)
 		if err != nil && shouldRetryRequest(err) {
-			options.Printf("dlstream.startDownloadTries: Error retrieving URL: %v, retrying request", err)
+			options.Infof("dlstream.startDownloadTries: Error retrieving URL: %v, retrying request", err)
 			retryWait(options)
 			continue
 		} else if err != nil {
-			options.Printf("dlstream.startDownloadTries: Error retrieving URL: %v, unrecoverable error, will not retry", err)
+			options.Errorf("dlstream.startDownloadTries: Error retrieving URL: %v, unrecoverable error, will not retry", err)
 			return err
 		}
 
@@ -166,7 +175,7 @@ func doCopyRequestBody(bodyReader io.ReadCloser, buffer []byte, contentLength, w
 				// If the writer at any point returns an error, we should abort and do nothing further
 				closeErr := bodyReader.Close()
 				if closeErr != nil {
-					options.Printf("dlstream.doCopyRequestBody: Error closing body reader: %v", err)
+					options.Errorf("dlstream.doCopyRequestBody: Error closing body reader: %v", err)
 				}
 				return written, false, writerErr // Bounce back the error
 			}
@@ -175,7 +184,7 @@ func doCopyRequestBody(bodyReader io.ReadCloser, buffer []byte, contentLength, w
 				// When the file returns an error, this is also pretty fatal, so abort
 				closeErr := bodyReader.Close()
 				if closeErr != nil {
-					options.Printf("dlstream.doCopyRequestBody: Error closing body reader: %v", err)
+					options.Errorf("dlstream.doCopyRequestBody: Error closing body reader: %v", err)
 				}
 				return written, false, errors.Wrap(fileErr, "error writing to file")
 			}
@@ -186,14 +195,14 @@ func doCopyRequestBody(bodyReader io.ReadCloser, buffer []byte, contentLength, w
 		if err == io.EOF {
 			_ = bodyReader.Close()
 			if written != contentLength {
-				options.Printf("dlstream.doCopyRequestBody: Download done yet incomplete, total: %d, expected: %d", written, contentLength)
+				options.Errorf("dlstream.doCopyRequestBody: Download done yet incomplete, total: %d, expected: %d", written, contentLength)
 				return written, false, ErrInconsistentDownload
 			}
-			options.Printf("dlstream.doCopyRequestBody: Download complete, %d bytes", written)
+			options.Infof("dlstream.doCopyRequestBody: Download complete, %d bytes", written)
 			return written, false, nil // YES, we have a complete download :)
 		} else if err != nil {
 			_ = bodyReader.Close()
-			options.Printf("dlstream.doCopyRequestBody: Error reading from response body: %v, total: %d, currently written: %d", err, contentLength, written)
+			options.Infof("dlstream.doCopyRequestBody: Error reading from response body: %v, total: %d, currently written: %d", err, contentLength, written)
 			retryWait(options)
 			return written, true, nil
 		}
@@ -201,7 +210,7 @@ func doCopyRequestBody(bodyReader io.ReadCloser, buffer []byte, contentLength, w
 }
 
 func retryWait(options *Options) {
-	options.Printf("dlstream.retryWait: Waiting for %v", options.RetryWait)
+	options.Infof("dlstream.retryWait: Waiting for %v", options.RetryWait)
 	time.Sleep(options.RetryWait)
 	options.RetryWait = time.Duration(float64(options.RetryWait) * options.RetryWaitMultiplier)
 }
@@ -266,16 +275,16 @@ func fetchURLInfoTries(ctx context.Context, url string, options *Options) (conte
 	for i := 0; i < int(options.Retries); i++ {
 		contentLength, resumable, err = fetchURLInfo(ctx, url, options)
 		if err != nil && shouldRetryRequest(err) {
-			options.Printf("dlstream.fetchURLInfoTries: Error fetching URL info: %v, retrying request", err)
+			options.Infof("dlstream.fetchURLInfoTries: Error fetching URL info: %v, retrying request", err)
 			retryWait(options)
 			continue
 		}
 		if err != nil {
-			options.Printf("dlstream.fetchURLInfoTries: Error fetching URL info: %v, unrecoverable error, will not retry", err)
+			options.Errorf("dlstream.fetchURLInfoTries: Error fetching URL info: %v, unrecoverable error, will not retry", err)
 			return -1, false, err
 		}
 
-		options.Printf("dlstream.fetchURLInfoTries: Download size: %d, Resumable: %v", contentLength, resumable)
+		options.Infof("dlstream.fetchURLInfoTries: Download size: %d, Resumable: %v", contentLength, resumable)
 		return contentLength, resumable, nil
 	}
 

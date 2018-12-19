@@ -245,7 +245,12 @@ type testLogger struct {
 	*testing.T
 }
 
-func (tl *testLogger) Printf(format string, args ...interface{}) {
-	log.Printf(format, args...)
-	//tl.Logf(format, args...)
+func (tl *testLogger) Infof(format string, args ...interface{}) {
+	log.Printf("[INFO] "+format, args...)
+	//tl.Logf("[INFO] "+format, args...)
+}
+
+func (tl *testLogger) Errorf(format string, args ...interface{}) {
+	log.Printf("[ERROR] "+format, args...)
+	//tl.Logf("[ERROR] "+format, args...)
 }
