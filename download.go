@@ -6,13 +6,16 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/pkg/errors"
 )
 
 const (
-	acceptRangeHeader = "Accept-Ranges"
+	acceptRangeHeader  = "Accept-Ranges"
+	rangeHeader        = "Range"
+	contentRangeHeader = "Content-Range"
 )
 
 var (
@@ -39,15 +42,18 @@ type Options struct {
 	Logger              Logger
 }
 
-// DefaultOptions are the default options used when no options are specified by users of the library
-var DefaultOptions = Options{
-	Timeout:             time.Hour,
-	InitialHeadTimeout:  time.Second * 3,
-	Retries:             5,
-	RetryWaitSeconds:    10,
-	RetryWaitMultiplier: 1.61803398875, // Bonus points to who gets it
-	FileMode:            0755,
-	BufferSize:          128 * 1024 * 1024,
+// DefaultOptions are the default options used when no options are specified by users of the library.
+// Call this function to get a new default options struct where you can adjust only the things you need to.
+func DefaultOptions() Options {
+	return Options{
+		Timeout:             time.Hour,
+		InitialHeadTimeout:  time.Second * 3,
+		Retries:             10,
+		RetryWaitSeconds:    1,
+		RetryWaitMultiplier: 1.61803398875, // Bonus points to who gets it
+		FileMode:            0755,
+		BufferSize:          128 * 1024,
+	}
 }
 
 // Printf checks if a logger is present and logs to it if it is
@@ -64,13 +70,13 @@ func (o *Options) Printf(format string, args ...interface{}) {
 // The download stream written to the writer will then be replayed from the beginning of the download.
 // With the given context the whole operation can be aborted.
 func DownloadStream(ctx context.Context, url, filePath string, writer io.Writer) (err error) {
-	return DownloadStreamOpts(ctx, filePath, url, writer, &DefaultOptions)
+	return DownloadStreamOpts(ctx, filePath, url, writer, DefaultOptions())
 }
 
 // DownloadStreamOpts is the same as DownloadStream, but allows you to override the default options with own values.
 // See DownloadStream for more information.
-func DownloadStreamOpts(ctx context.Context, url, filePath string, writer io.Writer, options *Options) (err error) {
-	contentLength, resumable, err := fetchURLInfo(url, options)
+func DownloadStreamOpts(ctx context.Context, url, filePath string, writer io.Writer, options Options) (err error) {
+	contentLength, resumable, err := fetchURLInfo(url, &options)
 	if err != nil {
 		options.Printf("DownloadStreamOpts: URL invalid: %v", err)
 		return err
@@ -78,7 +84,7 @@ func DownloadStreamOpts(ctx context.Context, url, filePath string, writer io.Wri
 	options.Printf("DownloadStreamOpts: Download size: %d, Resumable: %v", contentLength, resumable)
 
 	// Truncate the file if we cannot resume the http download
-	file, written, err := openFile(filePath, !resumable, options)
+	file, written, err := openFile(filePath, !resumable, &options)
 	if err != nil {
 		options.Printf("DownloadStreamOpts: Could not open file: %v", err)
 		return err
@@ -92,7 +98,7 @@ func DownloadStreamOpts(ctx context.Context, url, filePath string, writer io.Wri
 
 	if !resumable {
 		options.Printf("DownloadStreamOpts: Download not resumable")
-	} else {
+	} else if written > 0 {
 		options.Printf("DownloadStreamOpts: Current file size: %d, resuming", written)
 	}
 
@@ -110,11 +116,11 @@ func DownloadStreamOpts(ctx context.Context, url, filePath string, writer io.Wri
 		}
 	}
 
-	return startDownloadRetries(ctx, url, contentLength, written, file, writer, options)
+	return startDownloadTries(ctx, url, contentLength, written, file, writer, &options)
 }
 
-// startDownloadRetries starts a loop that retries the download until it either finishes or the retries are depleted
-func startDownloadRetries(ctx context.Context, url string, contentLength, written int64, file *os.File, writer io.Writer, options *Options) (err error) {
+// startDownloadTries starts a loop that retries the download until it either finishes or the retries are depleted
+func startDownloadTries(ctx context.Context, url string, contentLength, written int64, file *os.File, writer io.Writer, options *Options) (err error) {
 	buffer := make([]byte, options.BufferSize)
 	waitTime := time.Duration(options.RetryWaitSeconds) * time.Second
 
@@ -123,8 +129,9 @@ func startDownloadRetries(ctx context.Context, url string, contentLength, writte
 		options.Printf("DownloadStreamOpts: Downloading %s from offset %d, total size: %d, attempt %d", url, written, contentLength, i)
 
 		var bodyReader io.ReadCloser
-		contentLength, bodyReader, err = doDownloadRequest(ctx, url, written, options)
+		bodyReader, err = doDownloadRequest(ctx, url, written, contentLength, options)
 		if err != nil {
+			// TODO: FIXME: Check the type of error here and only retry when its a temporary connection error
 			options.Printf("DownloadStreamOpts: Error retrieving URL: %v", err)
 			waitTime = retryWait(options, waitTime)
 			continue
@@ -132,11 +139,11 @@ func startDownloadRetries(ctx context.Context, url string, contentLength, writte
 
 		// Byte loop that copies from the download reader to the file and writer
 		for {
-			var n int
+			var bytesRead int
 			var writerErr, fileErr error
-			n, err = bodyReader.Read(buffer)
-			if written > 0 {
-				_, writerErr = writer.Write(buffer[:n])
+			bytesRead, err = bodyReader.Read(buffer)
+			if bytesRead > 0 {
+				_, writerErr = writer.Write(buffer[:bytesRead])
 				if writerErr != nil {
 					// If the writer at any point returns an error, we should abort and do nothing further
 					closeErr := bodyReader.Close()
@@ -145,18 +152,18 @@ func startDownloadRetries(ctx context.Context, url string, contentLength, writte
 					}
 					return writerErr // Bounce back the error
 				}
-				_, fileErr = file.Write(buffer[:n])
+				_, fileErr = file.Write(buffer[:bytesRead])
 				if fileErr != nil {
 					// When the file returns an error, this is also pretty fatal, so abort
 					closeErr := bodyReader.Close()
 					if closeErr != nil {
 						options.Printf("DownloadStreamOpts: Error closing body reader: %v", err)
 					}
-					return errors.Wrap(err, "error writing to file")
+					return errors.Wrap(fileErr, "error writing to file")
 				}
 			}
 
-			written += int64(n)
+			written += int64(bytesRead)
 
 			if err == io.EOF {
 				_ = bodyReader.Close()
@@ -168,9 +175,9 @@ func startDownloadRetries(ctx context.Context, url string, contentLength, writte
 				return nil // YES, we have a complete download :)
 			} else if err != nil {
 				_ = bodyReader.Close()
-				options.Printf("DownloadStreamOpts: Error reading from response body: %v", err)
+				options.Printf("DownloadStreamOpts: Error reading from response body: %v, total: %d, currently written: %d", err, contentLength, written)
 				waitTime = retryWait(options, waitTime)
-				continue
+				break // break out of the copy loop
 			}
 		}
 	}
@@ -179,12 +186,13 @@ func startDownloadRetries(ctx context.Context, url string, contentLength, writte
 }
 
 func retryWait(options *Options, currentWait time.Duration) time.Duration {
+	options.Printf("retryWait: Waiting for %v", currentWait)
 	time.Sleep(currentWait)
 	return time.Duration(float64(currentWait) * options.RetryWaitMultiplier)
 }
 
 // doDownloadRequest sends an actual download request and returns the content length (again) and response body reader
-func doDownloadRequest(ctx context.Context, url string, downloadFrom int64, options *Options) (contentLength int64, body io.ReadCloser, err error) {
+func doDownloadRequest(ctx context.Context, url string, downloadFrom, totalContentLength int64, options *Options) (body io.ReadCloser, err error) {
 	client := http.Client{
 		Timeout: options.Timeout,
 	}
@@ -194,19 +202,47 @@ func doDownloadRequest(ctx context.Context, url string, downloadFrom int64, opti
 	req = req.WithContext(ctx)
 
 	if downloadFrom > 0 {
-		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", downloadFrom))
+		req.Header.Set(rangeHeader, fmt.Sprintf("bytes=%d-", downloadFrom))
 	}
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return -1, nil, errors.Wrap(err, "error requesting url")
+		return  nil, errors.Wrap(err, "error requesting url")
 	}
 
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return -1, nil, errors.Errorf("unexpected download http status code %d", resp.StatusCode)
+	if downloadFrom <= 0 {
+		if resp.StatusCode != http.StatusOK {
+			return nil, errors.Errorf("unexpected download http status code %d", resp.StatusCode)
+		}
+		if resp.ContentLength != totalContentLength {
+			return nil, errors.Errorf("unexpected response content-length (expected %d, got %d)", totalContentLength, resp.ContentLength)
+		}
+	} else {
+		if resp.StatusCode != http.StatusPartialContent {
+			return nil, errors.Errorf("unexpected download http status code %d", resp.StatusCode)
+		}
+
+		var respStart, respEnd, respTotal int64
+		_, err = fmt.Sscanf(
+			strings.ToLower(resp.Header.Get(contentRangeHeader)),
+			"bytes %d-%d/%d",
+			&respStart, &respEnd, &respTotal,
+		)
+		if err != nil {
+			return nil, errors.Wrap(err, "error parsing response content-range header")
+		}
+		if respStart != downloadFrom {
+			return nil, errors.Errorf("unexpected response range start (expected %d, got %d)", downloadFrom, respStart)
+		}
+		if respEnd != totalContentLength-1 {
+			return nil, errors.Errorf("unexpected response range end (expected %d, got %d)", totalContentLength-1, respEnd)
+		}
+		if respTotal != totalContentLength {
+			return nil, errors.Errorf("unexpected response range total (expected %d, got %d)", totalContentLength, respTotal)
+		}
 	}
 
-	return resp.ContentLength, resp.Body, nil
+	return resp.Body, nil
 }
 
 // verifyDownloadURL does a HEAD request to see if the download URL is valid and returns the size of the file
@@ -248,7 +284,7 @@ func fetchURLInfo(url string, options *Options) (contentLength int64, resumable 
 // written to it and thus a resume should be attempted.
 // If truncate is true, the file is truncated.
 func openFile(filePath string, truncate bool, options *Options) (file *os.File, resumeFrom int64, err error) {
-	flags := os.O_CREATE
+	flags := os.O_CREATE | os.O_EXCL
 	if truncate {
 		flags |= os.O_TRUNC | os.O_WRONLY
 	} else {
