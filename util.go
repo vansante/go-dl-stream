@@ -1,12 +1,17 @@
 package dlstream
 
 import (
+	"io"
 	"net"
 	"syscall"
 )
 
 // shouldRetryRequest analyzes a given request error and determines whether its a good idea to retry the request
 func shouldRetryRequest(err error) (shouldRetry bool) {
+	if err == io.ErrUnexpectedEOF {
+		return true
+	}
+
 	netErr, ok := err.(net.Error)
 	if ok {
 		return netErr.Temporary() || netErr.Timeout()

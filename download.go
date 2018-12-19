@@ -200,11 +200,17 @@ func doCopyRequestBody(bodyReader io.ReadCloser, buffer []byte, contentLength, w
 			}
 			options.Infof("dlstream.doCopyRequestBody: Download complete, %d bytes", written)
 			return written, false, nil // YES, we have a complete download :)
-		} else if err != nil {
+		}
+		if err != nil && shouldRetryRequest(err) {
 			_ = bodyReader.Close()
-			options.Infof("dlstream.doCopyRequestBody: Error reading from response body: %v, total: %d, currently written: %d", err, contentLength, written)
+			options.Infof("dlstream.doCopyRequestBody: Error reading from response body: %v, total: %d, currently written: %d, retrying", err, contentLength, written)
 			retryWait(options)
-			return written, true, nil
+			return written, true, err
+		}
+		if err != nil {
+			_ = bodyReader.Close()
+			options.Errorf("dlstream.doCopyRequestBody: Error reading from response body: %v, total: %d, currently written: %d, unrecoverable error, will not retry", err, contentLength, written)
+			return written, false, err
 		}
 	}
 }
