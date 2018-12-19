@@ -142,52 +142,62 @@ func startDownloadTries(ctx context.Context, url string, contentLength, written 
 			return err
 		}
 
-		// Byte loop that copies from the download reader to the file and writer
-		for {
-			var bytesRead int
-			var writerErr, fileErr error
-			bytesRead, err = bodyReader.Read(buffer)
-			if bytesRead > 0 {
-				_, writerErr = writer.Write(buffer[:bytesRead])
-				if writerErr != nil {
-					// If the writer at any point returns an error, we should abort and do nothing further
-					closeErr := bodyReader.Close()
-					if closeErr != nil {
-						options.Printf("dlstream.startDownloadTries: Error closing body reader: %v", err)
-					}
-					return writerErr // Bounce back the error
-				}
-				_, fileErr = file.Write(buffer[:bytesRead])
-				if fileErr != nil {
-					// When the file returns an error, this is also pretty fatal, so abort
-					closeErr := bodyReader.Close()
-					if closeErr != nil {
-						options.Printf("dlstream.startDownloadTries: Error closing body reader: %v", err)
-					}
-					return errors.Wrap(fileErr, "error writing to file")
-				}
-			}
-
-			written += int64(bytesRead)
-
-			if err == io.EOF {
-				_ = bodyReader.Close()
-				if written != contentLength {
-					options.Printf("dlstream.startDownloadTries: Download done yet incomplete, total: %d, expected: %d", written, contentLength)
-					return ErrInconsistentDownload
-				}
-				options.Printf("dlstream.startDownloadTries: Download complete, %d bytes", written)
-				return nil // YES, we have a complete download :)
-			} else if err != nil {
-				_ = bodyReader.Close()
-				options.Printf("dlstream.startDownloadTries: Error reading from response body: %v, total: %d, currently written: %d", err, contentLength, written)
-				retryWait(options)
-				break // break out of the copy loop
-			}
+		var shouldContinue bool
+		written, shouldContinue, err = doCopyRequestBody(bodyReader, buffer, contentLength, written, file, writer, options)
+		if shouldContinue {
+			continue
 		}
+		return err
 	}
 
 	return ErrNoMoreRetries
+}
+
+// doCopyRequestBody copies the request body to the file and writer and reports back errors and progress
+func doCopyRequestBody(bodyReader io.ReadCloser, buffer []byte, contentLength, written int64, file *os.File, writer io.Writer, options *Options) (newWritten int64, shouldContinue bool, err error) {
+	// Byte loop that copies from the download reader to the file and writer
+	for {
+		var bytesRead int
+		var writerErr, fileErr error
+		bytesRead, err = bodyReader.Read(buffer)
+		if bytesRead > 0 {
+			_, writerErr = writer.Write(buffer[:bytesRead])
+			if writerErr != nil {
+				// If the writer at any point returns an error, we should abort and do nothing further
+				closeErr := bodyReader.Close()
+				if closeErr != nil {
+					options.Printf("dlstream.doCopyRequestBody: Error closing body reader: %v", err)
+				}
+				return written, false, writerErr // Bounce back the error
+			}
+			_, fileErr = file.Write(buffer[:bytesRead])
+			if fileErr != nil {
+				// When the file returns an error, this is also pretty fatal, so abort
+				closeErr := bodyReader.Close()
+				if closeErr != nil {
+					options.Printf("dlstream.doCopyRequestBody: Error closing body reader: %v", err)
+				}
+				return written, false, errors.Wrap(fileErr, "error writing to file")
+			}
+		}
+
+		written += int64(bytesRead)
+
+		if err == io.EOF {
+			_ = bodyReader.Close()
+			if written != contentLength {
+				options.Printf("dlstream.doCopyRequestBody: Download done yet incomplete, total: %d, expected: %d", written, contentLength)
+				return written, false, ErrInconsistentDownload
+			}
+			options.Printf("dlstream.doCopyRequestBody: Download complete, %d bytes", written)
+			return written, false, nil // YES, we have a complete download :)
+		} else if err != nil {
+			_ = bodyReader.Close()
+			options.Printf("dlstream.doCopyRequestBody: Error reading from response body: %v, total: %d, currently written: %d", err, contentLength, written)
+			retryWait(options)
+			return written, true, nil
+		}
+	}
 }
 
 func retryWait(options *Options) {
