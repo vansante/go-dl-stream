@@ -76,12 +76,23 @@ func DownloadStream(ctx context.Context, url, filePath string, writer io.Writer)
 // DownloadStreamOpts is the same as DownloadStream, but allows you to override the default options with own values.
 // See DownloadStream for more information.
 func DownloadStreamOpts(ctx context.Context, url, filePath string, writer io.Writer, options Options) (err error) {
-	contentLength, resumable, err := fetchURLInfo(ctx, url, &options)
-	if err != nil {
-		options.Printf("DownloadStreamOpts: URL invalid: %v", err)
-		return err
+	var contentLength int64
+	var resumable bool
+	waitTime := options.RetryWait
+	for i := 0; i < int(options.Retries); i++ {
+		contentLength, resumable, err = fetchURLInfo(ctx, url, &options)
+		if err != nil && shouldRetryRequest(err) {
+			options.Printf("DownloadStreamOpts: Error fetching URL info: %v, retrying request", err)
+			waitTime = retryWait(&options, waitTime)
+			continue
+		}
+		if err != nil {
+			options.Printf("DownloadStreamOpts: Error fetching URL info: %v, unrecoverable error, will not retry", err)
+			return err
+		}
+		options.Printf("DownloadStreamOpts: Download size: %d, Resumable: %v", contentLength, resumable)
+		break
 	}
-	options.Printf("DownloadStreamOpts: Download size: %d, Resumable: %v", contentLength, resumable)
 
 	// Truncate the file if we cannot resume the http download
 	file, written, err := openFile(filePath, !resumable, &options)
