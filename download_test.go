@@ -16,6 +16,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pkg/errors"
+
 	"github.com/stretchr/testify/assert"
 )
 
@@ -145,6 +147,21 @@ func TestDownloadStreamManualResume(t *testing.T) {
 	assert.NoError(t, err)
 
 	assert.Equal(t, hash, hasherFile.Sum(nil))
+}
+
+func TestDownloadNonExistingServer(t *testing.T) {
+	dlPath := filepath.Join(os.TempDir(), "dl-manual-resume-test")
+	_ = os.Remove(dlPath) // Remove if it already exists
+	defer os.Remove(dlPath)
+
+	options := DefaultOptions()
+	options.Logger = &testLogger{t}
+
+	err := DownloadStreamOpts(context.Background(), "http://127.0.0.1:1337/random.rnd", dlPath, ioutil.Discard, options)
+	assert.Error(t, err)
+	netErr, ok := errors.Cause(err).(net.Error)
+	assert.True(t, ok)
+	assert.Contains(t, netErr.Error(), "connection refused")
 }
 
 func serveInterruptedTestFile(t *testing.T, fileSize, interruptAt int64, port int) (filePath string, sha1Hash []byte, cleanup func()) {

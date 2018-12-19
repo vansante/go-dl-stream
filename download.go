@@ -35,10 +35,10 @@ type Options struct {
 	Timeout             time.Duration
 	InitialHeadTimeout  time.Duration
 	RetryWait           time.Duration
-	Retries             uint
+	Retries             int
 	RetryWaitMultiplier float64
 	FileMode            os.FileMode
-	BufferSize          uint
+	BufferSize          int
 	Logger              Logger
 }
 
@@ -47,9 +47,9 @@ type Options struct {
 func DefaultOptions() Options {
 	return Options{
 		Timeout:             time.Hour,
-		InitialHeadTimeout:  time.Second * 3,
+		InitialHeadTimeout:  time.Second * 5,
 		Retries:             10,
-		RetryWait:           1,
+		RetryWait:           time.Second,
 		RetryWaitMultiplier: 1.61803398875, // Bonus points to who gets it
 		FileMode:            0755,
 		BufferSize:          128 * 1024,
@@ -76,7 +76,7 @@ func DownloadStream(ctx context.Context, url, filePath string, writer io.Writer)
 // DownloadStreamOpts is the same as DownloadStream, but allows you to override the default options with own values.
 // See DownloadStream for more information.
 func DownloadStreamOpts(ctx context.Context, url, filePath string, writer io.Writer, options Options) (err error) {
-	contentLength, resumable, err := fetchURLInfo(url, &options)
+	contentLength, resumable, err := fetchURLInfo(ctx, url, &options)
 	if err != nil {
 		options.Printf("DownloadStreamOpts: URL invalid: %v", err)
 		return err
@@ -130,11 +130,13 @@ func startDownloadTries(ctx context.Context, url string, contentLength, written 
 
 		var bodyReader io.ReadCloser
 		bodyReader, err = doDownloadRequest(ctx, url, written, contentLength, options)
-		if err != nil {
-			// TODO: FIXME: Check the type of error here and only retry when its a temporary connection error
-			options.Printf("DownloadStreamOpts: Error retrieving URL: %v", err)
+		if err != nil && shouldRetryRequest(err) {
+			options.Printf("DownloadStreamOpts: Error retrieving URL: %v, retrying request", err)
 			waitTime = retryWait(options, waitTime)
 			continue
+		} else if err != nil {
+			options.Printf("DownloadStreamOpts: Error retrieving URL: %v, unrecoverable error, will not retry", err)
+			return err
 		}
 
 		// Byte loop that copies from the download reader to the file and writer
@@ -247,12 +249,12 @@ func doDownloadRequest(ctx context.Context, url string, downloadFrom, totalConte
 
 // verifyDownloadURL does a HEAD request to see if the download URL is valid and returns the size of the file
 // Also checks if the download can be resumed
-func fetchURLInfo(url string, options *Options) (contentLength int64, resumable bool, err error) {
+func fetchURLInfo(ctx context.Context, url string, options *Options) (contentLength int64, resumable bool, err error) {
 	client := http.Client{
 		Timeout: options.InitialHeadTimeout,
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), options.InitialHeadTimeout)
+	ctx, cancel := context.WithTimeout(ctx, options.InitialHeadTimeout)
 	defer cancel()
 
 	req, err := http.NewRequest(http.MethodHead, url, nil)
