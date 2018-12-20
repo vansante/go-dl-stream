@@ -201,7 +201,6 @@ func serveInterruptedTestFile(t *testing.T, fileSize, interruptAt int64, port in
 		if err != nil {
 			t.FailNow()
 		}
-
 		_ = server.Serve(l)
 	}()
 
