@@ -18,3 +18,5 @@ golang.org/x/lint v0.0.0-20181217174547-8f45f776aaf1 h1:rJm0LuqUjoDhSk2zO9ISMSTo
 golang.org/x/lint v0.0.0-20181217174547-8f45f776aaf1/go.mod h1:UVdnD1Gm6xHRNCYTkRU2/jEulfH38KcIWyp/GAMgvoE=
 golang.org/x/tools v0.0.0-20181218204010-d4971274fe38 h1:e07OqjPO5oqQAJqid1fAwyMi/IK+hfSYrivMpzzAJtU=
 golang.org/x/tools v0.0.0-20181218204010-d4971274fe38/go.mod h1:n7NCudcB/nEzxVGmLbDWY5pfWTLqBcC2KZ6jyYvM4mQ=
+golang.org/x/tools v0.0.0-20190116231616-b258f6da2383 h1:CWP4O+Q3OaGBOLxV1/YRnzRSpvZYJlauwRUu3auRH5s=
+golang.org/x/tools v0.0.0-20190116231616-b258f6da2383/go.mod h1:n7NCudcB/nEzxVGmLbDWY5pfWTLqBcC2KZ6jyYvM4mQ=

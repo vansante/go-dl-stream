@@ -10,5 +10,5 @@ require (
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/stretchr/testify v1.2.2
 	golang.org/x/lint v0.0.0-20181217174547-8f45f776aaf1 // indirect
-	golang.org/x/tools v0.0.0-20181218204010-d4971274fe38 // indirect
+	golang.org/x/tools v0.0.0-20190116231616-b258f6da2383 // indirect
 )

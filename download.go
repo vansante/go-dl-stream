@@ -42,6 +42,7 @@ type Options struct {
 	RetryWaitMultiplier float64
 	FileMode            os.FileMode
 	BufferSize          int
+	HTTPTransport       http.RoundTripper
 	Logger              Logger
 }
 
@@ -224,7 +225,8 @@ func retryWait(options *Options) {
 // doDownloadRequest sends an actual download request and returns the content length (again) and response body reader
 func doDownloadRequest(ctx context.Context, url string, downloadFrom, totalContentLength int64, options *Options) (body io.ReadCloser, err error) {
 	client := http.Client{
-		Timeout: options.Timeout,
+		Timeout:   options.Timeout,
+		Transport: options.HTTPTransport,
 	}
 
 	// See: https://stackoverflow.com/a/29200933/3536354
