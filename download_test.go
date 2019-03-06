@@ -199,7 +199,7 @@ func serveInterruptedTestFile(t *testing.T, fileSize, interruptAt int64, port in
 		l, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
 		assert.NoError(t, err)
 		if err != nil {
-			t.FailNow()
+			return
 		}
 		_ = server.Serve(l)
 	}()
