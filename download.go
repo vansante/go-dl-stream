@@ -134,11 +134,13 @@ func DownloadStreamOpts(ctx context.Context, url, filePath string, writer io.Wri
 }
 
 // startDownloadTries starts a loop that retries the download until it either finishes or the retries are depleted
-func startDownloadTries(ctx context.Context, url string, contentLength, written int64, file *os.File, writer io.Writer, options *Options) (err error) {
+func startDownloadTries(
+	ctx context.Context, url string, contentLength, written int64, file *os.File, writer io.Writer, options *Options,
+) (err error) {
 	buffer := make([]byte, options.BufferSize)
 
 	// Loop that retries the download
-	for i := 0; i < int(options.Retries); i++ {
+	for i := 0; i < options.Retries; i++ {
 		options.Infof("dlstream.startDownloadTries: Downloading %s from offset %d, total size: %d, attempt %d", url, written, contentLength, i)
 
 		var bodyReader io.ReadCloser
@@ -164,7 +166,9 @@ func startDownloadTries(ctx context.Context, url string, contentLength, written 
 }
 
 // doCopyRequestBody copies the request body to the file and writer and reports back errors and progress
-func doCopyRequestBody(bodyReader io.ReadCloser, buffer []byte, contentLength, written int64, file *os.File, writer io.Writer, options *Options) (newWritten int64, shouldContinue bool, err error) {
+func doCopyRequestBody(
+	bodyReader io.ReadCloser, buffer []byte, contentLength, written int64, file *os.File, writer io.Writer, options *Options,
+) (newWritten int64, shouldContinue bool, err error) {
 	// Byte loop that copies from the download reader to the file and writer
 	for {
 		var bytesRead int
@@ -204,13 +208,19 @@ func doCopyRequestBody(bodyReader io.ReadCloser, buffer []byte, contentLength, w
 		}
 		if err != nil && shouldRetryRequest(err) {
 			_ = bodyReader.Close()
-			options.Infof("dlstream.doCopyRequestBody: Error reading from response body: %v, total: %d, currently written: %d, retrying", err, contentLength, written)
+			options.Infof(
+				"dlstream.doCopyRequestBody: Error reading from response body: %v, total: %d, currently written: %d, retrying",
+				err, contentLength, written,
+			)
 			retryWait(options)
 			return written, true, err
 		}
 		if err != nil {
 			_ = bodyReader.Close()
-			options.Errorf("dlstream.doCopyRequestBody: Error reading from response body: %v, total: %d, currently written: %d, unrecoverable error, will not retry", err, contentLength, written)
+			options.Errorf(
+				"dlstream.doCopyRequestBody: Error reading from response body: %v, total: %d, currently written: %d, unrecoverable error, will not retry",
+				err, contentLength, written,
+			)
 			return written, false, err
 		}
 	}
@@ -280,7 +290,7 @@ func doDownloadRequest(ctx context.Context, url string, downloadFrom, totalConte
 // fetchURLInfoTries tries the configured amount of attempts at doing a HEAD request
 // See FetchURLInfo for more information
 func fetchURLInfoTries(ctx context.Context, url string, options *Options) (contentLength int64, resumable bool, err error) {
-	for i := 0; i < int(options.Retries); i++ {
+	for i := 0; i < options.Retries; i++ {
 		contentLength, resumable, err = FetchURLInfo(ctx, url, options.InitialHeadTimeout)
 		if err != nil && shouldRetryRequest(err) {
 			options.Infof("dlstream.fetchURLInfoTries: Error fetching URL info: %v, retrying request", err)

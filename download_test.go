@@ -3,7 +3,7 @@ package dlstream
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha1"
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -30,7 +30,7 @@ func TestDownloadStreamNormal(t *testing.T) {
 	_, hash, cleanup := serveInterruptedTestFile(t, fileSize, 0, 1337)
 	defer cleanup()
 
-	hasherStream := sha1.New()
+	hasherStream := sha256.New()
 
 	dlPath := filepath.Join(os.TempDir(), "dl-normal-test")
 	_ = os.Remove(dlPath) // Remove if it already exists
@@ -57,7 +57,7 @@ func TestDownloadStreamNormal(t *testing.T) {
 	assert.NoError(t, err)
 	assert.EqualValues(t, fileSize, fi.Size())
 
-	hasherFile := sha1.New()
+	hasherFile := sha256.New()
 	_, err = io.Copy(hasherFile, file)
 	assert.NoError(t, err)
 
@@ -68,7 +68,7 @@ func TestDownloadStreamInterrupted(t *testing.T) {
 	_, hash, cleanup := serveInterruptedTestFile(t, fileSize, interruptAt, 1337)
 	defer cleanup()
 
-	hasherStream := sha1.New()
+	hasherStream := sha256.New()
 
 	dlPath := filepath.Join(os.TempDir(), "dl-interrupt-test")
 	_ = os.Remove(dlPath) // Remove if it already exists
@@ -95,7 +95,7 @@ func TestDownloadStreamInterrupted(t *testing.T) {
 	assert.NoError(t, err)
 	assert.EqualValues(t, fileSize, fi.Size())
 
-	hasherFile := sha1.New()
+	hasherFile := sha256.New()
 	_, err = io.Copy(hasherFile, file)
 	assert.NoError(t, err)
 
@@ -106,7 +106,7 @@ func TestDownloadStreamManualResume(t *testing.T) {
 	_, hash, cleanup := serveInterruptedTestFile(t, fileSize, interruptAt, 1337)
 	defer cleanup()
 
-	hasherStream := sha1.New()
+	hasherStream := sha256.New()
 
 	dlPath := filepath.Join(os.TempDir(), "dl-manual-resume-test")
 	_ = os.Remove(dlPath) // Remove if it already exists
@@ -146,7 +146,7 @@ func TestDownloadStreamManualResume(t *testing.T) {
 	assert.NoError(t, err)
 	assert.EqualValues(t, fileSize, fi.Size())
 
-	hasherFile := sha1.New()
+	hasherFile := sha256.New()
 	_, err = io.Copy(hasherFile, file)
 	assert.NoError(t, err)
 
@@ -173,7 +173,7 @@ func serveInterruptedTestFile(t *testing.T, fileSize, interruptAt int64, port in
 	assert.NoError(t, err)
 	filePath = rndFile.Name()
 
-	hasher := sha1.New()
+	hasher := sha256.New()
 	_, err = io.Copy(io.MultiWriter(hasher, rndFile), io.LimitReader(rand.Reader, fileSize))
 	assert.NoError(t, err)
 	assert.NoError(t, rndFile.Close())

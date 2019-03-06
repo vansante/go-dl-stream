@@ -1,4 +1,4 @@
-GOLANGCILINT := $(shell command -v golangci-lint 2> /dev/null)
+GOLANGCILINT := $(shell command -v ./bin/golangci-lint 2> /dev/null)
 
 all: lint test
 
