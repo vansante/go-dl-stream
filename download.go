@@ -81,7 +81,7 @@ func (o *Options) Errorf(format string, args ...interface{}) {
 // The download stream written to the writer will then be replayed from the beginning of the download.
 // With the given context the whole operation can be aborted.
 func DownloadStream(ctx context.Context, url, filePath string, writer io.Writer) (err error) {
-	return DownloadStreamOpts(ctx, filePath, url, writer, DefaultOptions())
+	return DownloadStreamOpts(ctx, url, filePath, writer, DefaultOptions())
 }
 
 // DownloadStreamOpts is the same as DownloadStream, but allows you to override the default options with own values.
