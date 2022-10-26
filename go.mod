@@ -1,4 +1,4 @@
-module gopkg.in/vansante/go-ffprobe.v2
+module gopkg.in/vansante/go-dl-stream.v2
 
 go 1.17
 
