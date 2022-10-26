@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"sync"
@@ -24,7 +24,7 @@ const (
 )
 
 func TestDownloadStreamNormal(t *testing.T) {
-	hash, cleanup := serveInterruptedTestFile(t, fileSize, 0, 1337)
+	serverURL, hash, cleanup := serveInterruptedTestFile(t, fileSize, 0)
 	defer cleanup()
 
 	hasherStream := sha256.New()
@@ -39,7 +39,7 @@ func TestDownloadStreamNormal(t *testing.T) {
 	options.RetryWait = time.Millisecond * 200
 	options.RetryWaitMultiplier = 1
 
-	err := DownloadStreamOpts(context.Background(), "http://127.0.0.1:1337/random.rnd", dlPath, hasherStream, options)
+	err := DownloadStreamOpts(context.Background(), serverURL+"/random.rnd", dlPath, hasherStream, options)
 	assert.NoError(t, err)
 
 	assert.Equal(t, hash, hasherStream.Sum(nil))
@@ -62,7 +62,7 @@ func TestDownloadStreamNormal(t *testing.T) {
 }
 
 func TestDownloadStreamInterrupted(t *testing.T) {
-	hash, cleanup := serveInterruptedTestFile(t, fileSize, interruptAt, 1337)
+	serverURL, hash, cleanup := serveInterruptedTestFile(t, fileSize, interruptAt)
 	defer cleanup()
 
 	hasherStream := sha256.New()
@@ -77,7 +77,7 @@ func TestDownloadStreamInterrupted(t *testing.T) {
 	options.RetryWait = time.Millisecond * 200
 	options.RetryWaitMultiplier = 1
 
-	err := DownloadStreamOpts(context.Background(), "http://127.0.0.1:1337/random.rnd", dlPath, hasherStream, options)
+	err := DownloadStreamOpts(context.Background(), serverURL+"/random.rnd", dlPath, hasherStream, options)
 	assert.NoError(t, err)
 
 	assert.Equal(t, hash, hasherStream.Sum(nil))
@@ -100,7 +100,7 @@ func TestDownloadStreamInterrupted(t *testing.T) {
 }
 
 func TestDownloadStreamManualResume(t *testing.T) {
-	hash, cleanup := serveInterruptedTestFile(t, fileSize, interruptAt, 1337)
+	serverURL, hash, cleanup := serveInterruptedTestFile(t, fileSize, interruptAt)
 	defer cleanup()
 
 	hasherStream := sha256.New()
@@ -116,19 +116,19 @@ func TestDownloadStreamManualResume(t *testing.T) {
 	options.RetryWaitMultiplier = 1
 	options.Retries = 2
 
-	err := DownloadStreamOpts(context.Background(), "http://127.0.0.1:1337/random.rnd", dlPath, io.Discard, options)
+	err := DownloadStreamOpts(context.Background(), serverURL+"/random.rnd", dlPath, io.Discard, options)
 	assert.Error(t, err)
 	assert.EqualValues(t, ErrNoMoreRetries, err)
 	assert.EqualValues(t, options.RetryWait, time.Millisecond*200)
 	assert.EqualValues(t, options.Retries, 2)
 
-	err = DownloadStreamOpts(context.Background(), "http://127.0.0.1:1337/random.rnd", dlPath, io.Discard, options)
+	err = DownloadStreamOpts(context.Background(), serverURL+"/random.rnd", dlPath, io.Discard, options)
 	assert.Error(t, err)
 	assert.EqualValues(t, ErrNoMoreRetries, err)
 	assert.EqualValues(t, options.RetryWait, time.Millisecond*200)
 	assert.EqualValues(t, options.Retries, 2)
 
-	err = DownloadStreamOpts(context.Background(), "http://127.0.0.1:1337/random.rnd", dlPath, hasherStream, options)
+	err = DownloadStreamOpts(context.Background(), serverURL+"/random.rnd", dlPath, hasherStream, options)
 	assert.NoError(t, err)
 
 	assert.Equal(t, hash, hasherStream.Sum(nil))
@@ -163,7 +163,7 @@ func TestDownloadNonExistingServer(t *testing.T) {
 	assert.Contains(t, err.Error(), "connection refused")
 }
 
-func serveInterruptedTestFile(t *testing.T, fileSize, interruptAt int64, port int) (sha1Hash []byte, cleanup func()) {
+func serveInterruptedTestFile(t *testing.T, fileSize, interruptAt int64) (serverURL string, sha1Hash []byte, cleanup func()) {
 	rndFile, err := os.CreateTemp(os.TempDir(), "random_file_*.rnd")
 	assert.NoError(t, err)
 	filePath := rndFile.Name()
@@ -184,26 +184,9 @@ func serveInterruptedTestFile(t *testing.T, fileSize, interruptAt int64, port in
 		}, request, filePath)
 
 	})
+	server := httptest.NewServer(mux)
 
-	server := &http.Server{
-		Handler:           mux,
-		ReadHeaderTimeout: time.Second,
-	}
-
-	go func() {
-		log.Printf("Starting http server on port %d", port)
-		l, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
-		assert.NoError(t, err)
-		if err != nil {
-			return
-		}
-		_ = server.Serve(l)
-	}()
-
-	time.Sleep(time.Second / 3) // Wait for HTTP server
-
-	return hasher.Sum(nil), func() {
-		_ = server.Close()
+	return server.URL, hasher.Sum(nil), func() {
 		_ = os.Remove(filePath)
 	}
 }
