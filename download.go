@@ -2,14 +2,13 @@ package dlstream
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"strings"
 	"time"
-
-	"github.com/pkg/errors"
 )
 
 const (
@@ -121,12 +120,12 @@ func DownloadStreamOpts(ctx context.Context, url, filePath string, writer io.Wri
 		_, err = file.Seek(0, io.SeekStart)
 		if err != nil {
 			options.Errorf("dlstream.DownloadStreamOpts: Error seeking file to start: %v", err)
-			return errors.Wrap(err, "error seeking file to start")
+			return fmt.Errorf("error seeking file to start: %w", err)
 		}
 		written, err = io.Copy(writer, file)
 		if err != nil {
 			options.Errorf("dlstream.DownloadStreamOpts: Error replaying file stream: %v", err)
-			return errors.Wrap(err, "error replaying file stream")
+			return fmt.Errorf("error replaying file stream: %w", err)
 		}
 	}
 
@@ -191,13 +190,14 @@ func doCopyRequestBody(
 				if closeErr != nil {
 					options.Errorf("dlstream.doCopyRequestBody: Error closing body reader: %v", err)
 				}
-				return written, false, errors.Wrap(fileErr, "error writing to file")
+				return written, false, fmt.Errorf("error writing to file: %w", fileErr)
 			}
 		}
 
 		written += int64(bytesRead)
 
-		if err == io.EOF {
+		switch {
+		case errors.Is(err, io.EOF):
 			_ = bodyReader.Close()
 			if written != contentLength {
 				options.Errorf("dlstream.doCopyRequestBody: Download done yet incomplete, total: %d, expected: %d", written, contentLength)
@@ -205,8 +205,7 @@ func doCopyRequestBody(
 			}
 			options.Infof("dlstream.doCopyRequestBody: Download complete, %d bytes", written)
 			return written, false, nil // YES, we have a complete download :)
-		}
-		if err != nil && shouldRetryRequest(err) {
+		case shouldRetryRequest(err):
 			_ = bodyReader.Close()
 			options.Infof(
 				"dlstream.doCopyRequestBody: Error reading from response body: %v, total: %d, currently written: %d, retrying",
@@ -214,8 +213,7 @@ func doCopyRequestBody(
 			)
 			retryWait(options)
 			return written, true, err
-		}
-		if err != nil {
+		case err != nil:
 			_ = bodyReader.Close()
 			options.Errorf(
 				"dlstream.doCopyRequestBody: Error reading from response body: %v, total: %d, currently written: %d, unrecoverable error, will not retry",
@@ -249,19 +247,19 @@ func doDownloadRequest(ctx context.Context, url string, downloadFrom, totalConte
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, errors.Wrap(err, "error requesting url")
+		return nil, fmt.Errorf("error requesting url: %w", err)
 	}
 
 	if downloadFrom <= 0 {
 		if resp.StatusCode != http.StatusOK {
-			return nil, errors.Errorf("unexpected download http status code %d", resp.StatusCode)
+			return nil, fmt.Errorf("unexpected download http status code %d", resp.StatusCode)
 		}
 		if resp.ContentLength != totalContentLength {
-			return nil, errors.Errorf("unexpected response content-length (expected %d, got %d)", totalContentLength, resp.ContentLength)
+			return nil, fmt.Errorf("unexpected response content-length (expected %d, got %d)", totalContentLength, resp.ContentLength)
 		}
 	} else {
 		if resp.StatusCode != http.StatusPartialContent {
-			return nil, errors.Errorf("unexpected download http status code %d", resp.StatusCode)
+			return nil, fmt.Errorf("unexpected download http status code %d", resp.StatusCode)
 		}
 
 		var respStart, respEnd, respTotal int64
@@ -271,16 +269,16 @@ func doDownloadRequest(ctx context.Context, url string, downloadFrom, totalConte
 			&respStart, &respEnd, &respTotal,
 		)
 		if err != nil {
-			return nil, errors.Wrap(err, "error parsing response content-range header")
+			return nil, fmt.Errorf("error parsing response content-range header: %w", err)
 		}
 		if respStart != downloadFrom {
-			return nil, errors.Errorf("unexpected response range start (expected %d, got %d)", downloadFrom, respStart)
+			return nil, fmt.Errorf("unexpected response range start (expected %d, got %d)", downloadFrom, respStart)
 		}
 		if respEnd != totalContentLength-1 {
-			return nil, errors.Errorf("unexpected response range end (expected %d, got %d)", totalContentLength-1, respEnd)
+			return nil, fmt.Errorf("unexpected response range end (expected %d, got %d)", totalContentLength-1, respEnd)
 		}
 		if respTotal != totalContentLength {
-			return nil, errors.Errorf("unexpected response range total (expected %d, got %d)", totalContentLength, respTotal)
+			return nil, fmt.Errorf("unexpected response range total (expected %d, got %d)", totalContentLength, respTotal)
 		}
 	}
 
@@ -321,24 +319,24 @@ func FetchURLInfo(ctx context.Context, url string, timeout time.Duration) (conte
 
 	req, err := http.NewRequest(http.MethodHead, url, nil)
 	if err != nil {
-		return -1, false, errors.Wrap(err, "error creating head request")
+		return -1, false, fmt.Errorf("error creating head request: %w", err)
 	}
 	req = req.WithContext(ctx)
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return -1, false, errors.Wrap(err, "error requesting url")
+		return -1, false, fmt.Errorf("error requesting url: %w", err)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return -1, false, errors.Errorf("unexpected head status code %d", resp.StatusCode)
+		return -1, false, fmt.Errorf("unexpected head status code %d", resp.StatusCode)
 	}
 
 	err = resp.Body.Close()
 	if err != nil {
-		return -1, false, errors.Wrap(err, "error closing response body")
+		return -1, false, fmt.Errorf("error closing response body: %w", err)
 	}
 
-	// Resumable is only possible if we can request ranges and know how big the file is gonna be.
+	// Resumable is only possible if we can request ranges and know how big the file is going to be.
 	resumable = resp.Header.Get(acceptRangeHeader) == "bytes" && resp.ContentLength > 0
 
 	return resp.ContentLength, resumable, nil
@@ -362,12 +360,12 @@ func openFile(filePath string, truncate bool, options *Options) (file *os.File, 
 
 	file, err = os.OpenFile(filePath, flags, options.FileMode)
 	if err != nil {
-		return nil, -1, errors.Wrap(err, "error opening download file")
+		return nil, -1, fmt.Errorf("error opening download file: %w", err)
 	}
 
 	resumeFrom, err = file.Seek(0, io.SeekEnd)
 	if err != nil {
-		return nil, -1, errors.Wrap(err, "error seeking download file")
+		return nil, -1, fmt.Errorf("error seeking download file: %w", err)
 	}
 	return file, resumeFrom, nil
 }
