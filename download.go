@@ -155,6 +155,7 @@ func startDownloadTries(
 
 		var shouldContinue bool
 		written, shouldContinue, err = doCopyRequestBody(bodyReader, buffer, contentLength, written, file, writer, options)
+		_ = bodyReader.Close()
 		if shouldContinue {
 			continue
 		}
@@ -252,34 +253,44 @@ func doDownloadRequest(ctx context.Context, url string, downloadFrom, totalConte
 
 	if downloadFrom <= 0 {
 		if resp.StatusCode != http.StatusOK {
+			_ = resp.Body.Close()
 			return nil, fmt.Errorf("unexpected download http status code %d", resp.StatusCode)
 		}
 		if resp.ContentLength != totalContentLength {
+			_ = resp.Body.Close()
 			return nil, fmt.Errorf("unexpected response content-length (expected %d, got %d)", totalContentLength, resp.ContentLength)
 		}
-	} else {
-		if resp.StatusCode != http.StatusPartialContent {
-			return nil, fmt.Errorf("unexpected download http status code %d", resp.StatusCode)
-		}
+		// Return the body, done
+		return resp.Body, nil
+	}
 
-		var respStart, respEnd, respTotal int64
-		_, err = fmt.Sscanf(
-			strings.ToLower(resp.Header.Get(contentRangeHeader)),
-			"bytes %d-%d/%d",
-			&respStart, &respEnd, &respTotal,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("error parsing response content-range header: %w", err)
-		}
-		if respStart != downloadFrom {
-			return nil, fmt.Errorf("unexpected response range start (expected %d, got %d)", downloadFrom, respStart)
-		}
-		if respEnd != totalContentLength-1 {
-			return nil, fmt.Errorf("unexpected response range end (expected %d, got %d)", totalContentLength-1, respEnd)
-		}
-		if respTotal != totalContentLength {
-			return nil, fmt.Errorf("unexpected response range total (expected %d, got %d)", totalContentLength, respTotal)
-		}
+	if resp.StatusCode != http.StatusPartialContent {
+		return nil, fmt.Errorf("unexpected download http status code %d", resp.StatusCode)
+	}
+
+	// Validate we are receiving the right portion of partial content
+	var respStart, respEnd, respTotal int64
+	_, err = fmt.Sscanf(
+		strings.ToLower(resp.Header.Get(contentRangeHeader)),
+		"bytes %d-%d/%d",
+		&respStart, &respEnd, &respTotal,
+	)
+	if err != nil {
+		_ = resp.Body.Close()
+		return nil, fmt.Errorf("error parsing response content-range header: %w", err)
+	}
+
+	if respStart != downloadFrom {
+		_ = resp.Body.Close()
+		return nil, fmt.Errorf("unexpected response range start (expected %d, got %d)", downloadFrom, respStart)
+	}
+	if respEnd != totalContentLength-1 {
+		_ = resp.Body.Close()
+		return nil, fmt.Errorf("unexpected response range end (expected %d, got %d)", totalContentLength-1, respEnd)
+	}
+	if respTotal != totalContentLength {
+		_ = resp.Body.Close()
+		return nil, fmt.Errorf("unexpected response range total (expected %d, got %d)", totalContentLength, respTotal)
 	}
 
 	return resp.Body, nil
